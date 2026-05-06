@@ -1,44 +1,75 @@
 {
   "name": "opencode-debug",
-  "version": "0.1.0",
-  "description": "Runtime debug agent for OpenCode — inject probes, capture output, analyze, fix, cleanup",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "version": "1.0.0",
+  "description": "Cursor-style debug agent for OpenCode — inject probes into CLI and browser apps, capture runtime data via HTTP, analyze and fix bugs automatically.",
+  "license": "MIT",
+  "author": "Roman Rolgin",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rolginroman/opencode-debug.git"
+  },
+  "homepage": "https://github.com/rolginroman/opencode-debug#readme",
+  "bugs": "https://github.com/rolginroman/opencode-debug/issues",
+
   "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "files": [
     "dist",
     "agent",
     "skill",
-    "README.md"
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
   ],
+
+  "sideEffects": false,
+  "engines": {
+    "node": ">=20"
+  },
+
   "scripts": {
     "build": "tsc",
+    "dev": "tsc --watch",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "tsc",
+    "release": "np"
   },
+
   "keywords": [
     "opencode",
     "opencode-plugin",
+    "opencode-agent",
     "debug",
     "debugging",
-    "runtime",
+    "debug-agent",
+    "runtime-debugging",
     "instrumentation",
     "probe",
-    "agent"
+    "browser-debugging",
+    "cursor-debug",
+    "ai-agent"
   ],
-  "author": "Roman Rolgin",
-  "license": "MIT",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/rolginroman/opencode-debug"
+
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.14.0"
+  },
+  "peerDependenciesMeta": {
+    "@opencode-ai/plugin": {
+      "optional": false
+    }
   },
   "devDependencies": {
-    "@opencode-ai/plugin": "^1.4.6",
-    "@types/bun": "latest",
+    "@opencode-ai/plugin": "^1.14.30",
     "typescript": "^5.7.0",
-    "vitest": "^4.0.16"
-  },
-  "peerDependencies": {
-    "@opencode-ai/plugin": "*"
+    "vitest": "^3.0.0"
   }
 }
