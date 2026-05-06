@@ -1,6 +1,6 @@
 {
   "name": "opencode-debug",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Cursor-style debug agent for OpenCode — inject probes into CLI and browser apps, capture runtime data via HTTP, analyze and fix bugs automatically.",
   "license": "MIT",
   "author": "Roman Rolgin",
