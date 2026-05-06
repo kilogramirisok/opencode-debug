@@ -1,49 +1,43 @@
 # opencode-debug
 
-**Runtime debug agent for OpenCode** — inject probes, capture output, analyze, fix, cleanup.
-
-A plugin that gives OpenCode the same kind of interactive debugging experience as Cursor's Debug Mode, but leveraging the CLI's unique advantage: full shell access to run apps, curl endpoints, and trigger tests without user intervention.
+**Cursor-style debug agent for OpenCode** — inject probes into CLI and browser apps, capture runtime data, analyze and fix bugs automatically.
 
 ## Why?
 
-Cursor's Debug Mode works because it can:
-1. Explore the codebase and understand context
-2. Hypothesize about root causes
-3. Instrument code with temporary probes
-4. Have the user reproduce the bug (captures runtime data via IDE extension)
-5. Analyze the captured output
-6. Make a targeted fix
-7. Verify and clean up
+Cursor's Debug Mode works by instrumenting code with probes that POST runtime data to a local HTTP server. This plugin gives OpenCode the same capability — plus CLI apps get automatic reproduction via shell access.
 
-OpenCode doesn't have an IDE extension to intercept runtime output — but it **does** have full shell access. This plugin turns that into an advantage: the agent can automatically run the failing command, curl the endpoint, trigger the test suite, etc., all without user intervention.
+**Two modes:**
+- **CLI mode** — for Node.js/Python/Go scripts, test suites, server apps. Agent runs the command itself, no user action needed.
+- **Browser mode** — for React/Vue/Svelte apps. User reproduces the bug in their real browser (extensions, cookies, sessions intact). Probes POST data to the agent's HTTP server.
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│                  OpenCode                    │
-│                                             │
-│  ┌─────────┐    ┌──────────────────────┐   │
-│  │  debug   │    │   debug agent prompt │   │
-│  │  agent   │◄───│   (10-step workflow)  │   │
-│  └────┬─────┘    └──────────────────────┘   │
-│       │                                     │
-│  ┌────▼─────────────────────────────────┐   │
-│  │           5 Tools                    │   │
-│  │                                      │   │
-│  │  debug-quick-check ──► Fast triage   │   │
-│  │  debug-instrument  ──► Inject probes │   │
-│  │  debug-run-and-capture ─► Run + log  │   │
-│  │  debug-read-capture ─► Filter output │   │
-│  │  debug-cleanup     ──► Remove probes │   │
-│  └──────────────────────────────────────┘   │
-│       │                                     │
-│  ┌────▼──────────┐                          │
-│  │ /tmp/opencode- │  ◄── capture logs       │
-│  │ debug/*.log    │  ◄── manifests           │
-│  │ *.manifest     │                          │
-│  └────────────────┘                          │
-└─────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────┐
+│                    OpenCode                       │
+│                                                  │
+│  ┌─────────┐    ┌───────────────────────────┐   │
+│  │  debug   │    │    debug agent prompt     │   │
+│  │  agent   │◄───│    (two-mode workflow)     │   │
+│  └────┬─────┘    └───────────────────────────┘   │
+│       │                                          │
+│  ┌────▼──────────────────────────────────────┐   │
+│  │              6 Tools                      │   │
+│  │                                           │   │
+│  │  debug-quick-check  ──► Fast triage       │   │
+│  │  debug-server       ──► HTTP capture      │   │
+│  │  debug-instrument   ──► Inject probes     │   │
+│  │  debug-run-and-capture ─► Run + log       │   │
+│  │  debug-read-capture ──► Filter output     │   │
+│  │  debug-cleanup      ──► Remove probes     │   │
+│  └───────────────────────────────────────────┘   │
+│       │                                          │
+│  ┌────▼──────────┐   ┌──────────────────┐        │
+│  │ /tmp/opencode- │   │ http://localhost │        │
+│  │ debug/*.log    │   │ :9514/capture    │        │
+│  │ (CLI mode)     │   │ (browser mode)   │        │
+│  └────────────────┘   └──────────────────┘        │
+└──────────────────────────────────────────────────┘
 ```
 
 ## Tools
@@ -51,85 +45,87 @@ OpenCode doesn't have an IDE extension to intercept runtime output — but it **
 ### `debug-quick-check`
 Fast triage — runs a command, captures exit code/stderr, detects common error patterns (TypeError, ImportError, ECONNREFUSED, etc.). Use this first before the full workflow.
 
-### `debug-instrument`
-Inject debug probes into source files using comment markers:
+### `debug-server`
+Start/stop the HTTP capture server for browser mode. Probes in your app POST runtime data here. Endpoints: `/capture`, `/status`, `/sessions`, `/session/:id`, `/shutdown`. CORS enabled — works with Vite, Next.js dev mode, any dev server.
 
-| Probe Type | Marker | What it does |
-|------------|--------|-------------|
-| `trace` | `/* @debug:trace */` | Logs function entry |
-| `log` | `/* @debug:log */` | Logs variable/expression value |
-| `timer` | `/* @debug:timer */` | Measures execution time |
-| `watch` | `/* @debug:watch */` | Logs expression value at that point |
+### `debug-instrument`
+Inject debug probes into source files. Two modes:
+
+**CLI mode** (`mode: "cli"`) — `console.log` probes captured via stdout:
+```js
+/* @debug:loop-var:abc123 */
+console.log("[DEBUG:loop-var]", JSON.stringify({i: i}))
+```
+
+**Browser mode** (`mode: "browser"`) — `fetch()` probes POST to debug server:
+```js
+// #region opencode-debug: loop-var
+(function(){
+  var _j = JSON.stringify({t:Date.now(), p:"loop-var", s:"abc123", d:{"i": i}});
+  fetch("http://localhost:9514/capture", {method:"POST", body:_j, headers:{"Content-Type":"application/json"}, keepalive:true}).catch(function(){});
+})();
+// #endregion opencode-debug: loop-var
+```
+
+| Probe Type | What it does |
+|------------|-------------|
+| `trace` | Logs function entry with arguments |
+| `log` | Logs variable/expression values |
+| `timer` | Measures execution time (start + end) |
+| `watch` | Logs expression value at that point |
 
 Supports **TypeScript, JavaScript, Python, and Go**. Creates `.debug.bak` backups before modifying files.
 
 ### `debug-run-and-capture`
-Run a shell command and capture all stdout/stderr to a session-scoped log file. Supports:
-- Timeout control
-- Custom working directory
-- Environment variable injection
-- Session reuse (append multiple runs to same log)
-
-Output goes to `/tmp/opencode-debug/{sessionId}.log`.
+Run a shell command and capture all stdout/stderr to a session-scoped log file. Supports timeout, custom cwd, env vars, session reuse.
 
 ### `debug-read-capture`
-Read and filter captured debug output:
-- Keyword search (case-insensitive)
-- Regex pattern matching
-- Line range filtering
-- Line-numbered output
+Read and filter captured output. Two formats:
+- `format: "raw"` — for CLI mode stdout capture
+- `format: "structured"` — for browser mode JSON probe data
+
+Supports keyword search, regex, line ranges.
 
 ### `debug-cleanup`
-Remove all debug probes from source files. Can:
-- Target a specific session's probes
-- Remove all probes across all files
-- Restore from `.bak` backups
-- Remove capture log files
-- Dry-run mode to preview changes
-
-## Agent Workflow
-
-The debug agent follows a 10-step evidence-based workflow:
-
-```
-UNDERSTAND → TRIAGE → INSTRUMENT → REPRODUCE → ANALYZE → (loop) → FIX → VERIFY → CLEANUP → SUMMARIZE
-```
-
-**Key rule:** Never fix without runtime evidence. Max 3 instrumentation rounds.
+Remove all debug probes and stop the server. Handles both `/* @debug: */` markers (CLI) and `#region` blocks (browser). Can restore from `.bak`, remove logs, stop server, dry-run.
 
 ## Installation
 
-### As an OpenCode plugin
-
-1. Clone this repo:
 ```bash
-git clone https://github.com/rolginroman/opencode-debug.git
-cd opencode-debug
+opencode plugin opencode-debug
 ```
 
-2. Build:
-```bash
-bun install
-bun run build
-```
+That's it. The tools auto-activate when OpenCode sees error messages.
 
-3. Add to your project's `.opencode/plugins.json` or global config:
-```json
-{
-  "plugins": [
-    "file:///path/to/opencode-debug"
-  ]
-}
-```
+## Usage
 
-### Development
+### CLI app debugging (fully automatic)
+Just describe the bug:
+> *"Running `node server.js` crashes with TypeError"*
 
-```bash
-bun install
-bun run typecheck
-bun run build
-bun run test
-```
+The agent will triage, instrument, reproduce, analyze, fix, and cleanup — no user action needed.
+
+### Browser app debugging (user reproduces)
+> *"Clicking submit in src/Form.tsx crashes the app"*
+
+The agent will start the debug server, inject `fetch()` probes, then say:
+> **"Probes injected. Reproduce the bug in your browser."**
+
+You use your real browser at `localhost:5173` as normal. The probes POST data back. The agent reads it, fixes the bug, cleans up.
+
+## Comparison with Cursor Debug Mode
+
+| Feature | Cursor | opencode-debug |
+|---------|--------|---------------|
+| Code exploration | ✅ IDE context | ✅ File access |
+| Hypothesis generation | ✅ LLM | ✅ LLM |
+| Code instrumentation | ✅ IDE extension | ✅ Comment markers + `fetch()` probes |
+| Runtime capture (browser) | ✅ IDE debug server | ✅ HTTP capture server |
+| Runtime capture (CLI) | ❌ | ✅ Shell pipes to log |
+| Auto-reproduce (CLI) | ❌ User reproduces | ✅ Agent runs commands |
+| Multi-language | ✅ VS Code debugger | ✅ TS/JS/Python/Go probes |
+| Cleanup | ✅ Automatic | ✅ Marker + `#region` removal |
+| Real browser (extensions, cookies) | ✅ User's browser | ✅ User's browser |
 
 ## Project Structure
 
@@ -138,11 +134,12 @@ opencode-debug/
 ├── src/
 │   ├── index.ts              # Plugin entry point
 │   └── tools/
-│       ├── quick-check.ts    # Fast triage tool
-│       ├── instrument.ts     # Probe injection tool
-│       ├── run-and-capture.ts # Run + capture tool
-│       ├── read-capture.ts   # Log reader/filter tool
-│       └── cleanup.ts        # Probe removal tool
+│       ├── quick-check.ts    # Fast triage
+│       ├── debug-server.ts   # HTTP capture server
+│       ├── instrument.ts     # Probe injection (CLI + browser)
+│       ├── run-and-capture.ts # Run + capture
+│       ├── read-capture.ts   # Log reader (raw + structured)
+│       └── cleanup.ts        # Probe removal + server stop
 ├── agent/
 │   └── debug.md              # Debug agent system prompt
 ├── skill/
@@ -152,73 +149,19 @@ opencode-debug/
 └── README.md
 ```
 
-## Learnings from Research
-
-### No existing debug agent for OpenCode
-Extensive search across the OpenCode ecosystem (awesome-opencode, opencode.cafe marketplace, GitHub) confirmed there's no runtime debugging plugin. The closest is `specialist-agent`'s `@doctor` agent, which only does static analysis.
-
-### Cursor's debug advantage = IDE extension
-Cursor intercepts runtime output via its VS Code extension — a debug server runs inside the IDE process. OpenCode doesn't have this, but has something better for CLI: full shell access.
-
-### Plugin API (from studying opencode-froggy)
-- Plugins export a default `Plugin` async function
-- Tools use `tool()` from `@opencode-ai/plugin` with zod-style schema
-- Agents loaded from markdown files in `agent/` directory
-- Skills loaded from `skill/SKILL.md` with `useWhen` triggers
-- Plugin hooks: `tool.execute.before`, `tool.execute.after`, `event`, `config`
-
-### Marker-based instrumentation > AST
-Using `/* @debug:id */` comment markers instead of AST transformation because:
-- Works across all languages
-- Easy to find and remove (just grep for `@debug:`)
-- No dependency on language-specific parsers
-- Sufficient for the probe types we need (trace, log, timer, watch)
-
-### Session-scoped capture
-Each debug session gets a unique ID. All probes, capture logs, and manifests are tied to this ID. This enables:
-- Multiple debug sessions without interference
-- Targeted cleanup of specific sessions
-- Correlation between injected probes and captured output
-
-## Comparison with Cursor Debug Mode
-
-| Feature | Cursor | opencode-debug |
-|---------|--------|---------------|
-| Code exploration | ✅ IDE context | ✅ File access |
-| Hypothesis generation | ✅ LLM | ✅ LLM |
-| Code instrumentation | ✅ IDE extension | ✅ Comment markers |
-| Runtime capture | ✅ IDE debug server | ✅ Shell pipes to log |
-| Auto-reproduce | ❌ User reproduces | ✅ Agent runs commands |
-| Endpoint testing | ❌ Manual | ✅ Auto-curl |
-| Multi-language | ✅ VS Code debugger | ✅ TS/JS/Python/Go probes |
-| Cleanup | ✅ Automatic | ✅ Marker-based removal |
-| Test triggering | ❌ Manual | ✅ Agent runs test suite |
-
-The key differentiator: **OpenCode can reproduce the bug automatically** without the user doing anything. Cursor needs the user to trigger the reproduction manually.
-
 ## Verified Test Results
 
 **Unit tests:** 16/16 passing (`npm run test`)
-- Tool build compilation
-- run-and-capture: stdout/stderr capture, exit codes, session reuse
-- quick-check: error pattern detection (TypeError, ImportError, etc.)
-- instrument: probe injection with .bak backup and manifest
-- read-capture: keyword/regex filtering, line ranges
-- cleanup: marker removal, backup cleanup
-- Plugin entry point: valid hooks, tool registration, agent config
 
 **Integration tests in OpenCode 1.14.39:**
 
-1. **Plugin loading:** All 5 tools registered in `tool.registry` ✅
-2. **Agent selection:** `--agent debug` activates debug agent with glm-5.1 ✅
-3. **Quick-check tool:** Called by LLM, detected TypeError in `undefined.foo` ✅
-4. **Full debug workflow:** instrument → run-and-capture → read-capture → fix → verify ✅
-   - Injected log probe at specific line with expression
-   - Captured runtime output with session-scoped log
-   - Filtered captured output by "DEBUG" keyword
-   - LLM generated root cause analysis table from probe data
-5. **Skill auto-activation:** Default `build` agent automatically used `debug-quick-check` when encountering errors (no `--agent debug` needed) ✅
-6. **Cleanup tool:** Removes `/* @debug:... */` markers and `.debug.bak` files ✅
+1. ✅ Plugin loading — all 6 tools registered
+2. ✅ Agent selection — `--agent debug` activates debug agent
+3. ✅ Quick-check tool — detects TypeError, ImportError patterns
+4. ✅ CLI mode workflow — instrument → run-and-capture → read → fix → cleanup
+5. ✅ Browser mode workflow — server start → instrument → simulated POST → read structured data → cleanup + stop server
+6. ✅ Skill auto-activation — default agent uses debug tools on error messages
+7. ✅ Cleanup — removes both `/* @debug: */` markers and `#region` blocks
 
 ## License
 
