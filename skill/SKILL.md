@@ -5,7 +5,7 @@ useWhen: "message contains error messages, stack traces, failing tests, crashes,
 
 # Debug Skill
 
-Runtime debugging workflow for OpenCode. Activates when the user reports a bug, error, crash, or unexpected behavior.
+Runtime debugging workflow. Activates when the user reports a bug, error, crash, or unexpected behavior.
 
 ## Activation Triggers
 
