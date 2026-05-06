@@ -7,5 +7,4 @@ vitest.config.*
 .opencode/
 *.test.ts
 *.spec.ts
-PLAN.md
 .tmp/
