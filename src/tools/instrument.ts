@@ -33,11 +33,50 @@ export interface InstrumentArgs {
   functionName?: string
   /** Label for the probe */
   label?: string
-  /** Override the capture server URL (default: auto-detected from debug-server) */
+  /** Instrumentation mode: cli = console.log (stdout), browser = fetch() POST to debug server */
+  mode?: "cli" | "browser"
+  /** Override the capture server URL (browser mode: auto-detected from debug-server) */
   captureUrl?: string
 }
 
-// ─── JS/TS probe generator (HTTP-based, Cursor pattern) ────────────────
+// ─── JS/TS CLI probe generator (console.log, stdout capture) ──────────
+
+function jsCliProbe(args: {
+  probeType: string
+  expr?: string
+  fn?: string
+  label: string
+  sessionId: string
+}): string {
+  const { probeType, expr, fn, label, sessionId } = args
+
+  let valueExpr: string
+  switch (probeType) {
+    case "trace":
+      valueExpr = `{ fn: "${fn ?? "anon"}", type: "enter" }`
+      break
+    case "log":
+      valueExpr = expr
+        ? expr.split(",").map(e => {
+            const trimmed = e.trim()
+            return `"${trimmed}": ${trimmed}`
+          }).join(", ")
+        : `{ checkpoint: true }`
+      break
+    case "timer":
+      valueExpr = `{ ms: Date.now(), phase: "mark" }`
+      break
+    case "watch":
+      valueExpr = expr ? `{ expr: "${expr}", value: ${expr} }` : `{ watching: true }`
+      break
+    default:
+      valueExpr = `{ type: "${probeType}" }`
+  }
+
+  return `/* @debug:${probeType}:${sessionId} */ console.log("[DEBUG:${label}:${sessionId}]", ${valueExpr});`
+}
+
+// ─── JS/TS browser probe generator (HTTP-based, Cursor pattern) ──────
 
 function jsProbe(args: {
   probeType: string
@@ -56,7 +95,14 @@ function jsProbe(args: {
       dataExpr = `{fn:"${fn ?? "anon"}",type:"enter"}`
       break
     case "log":
-      dataExpr = expr ? `{${expr}}` : `{checkpoint:true}`
+      // For multi-variable expressions like "i, items[i]", split and wrap each
+      // "items[i]" → {"items[i]": items[i]} (valid JS, readable in capture)
+      dataExpr = expr
+        ? `{${expr.split(",").map(e => {
+            const trimmed = e.trim()
+            return `"${trimmed}": ${trimmed}`
+          }).join(", ")}}`
+        : `{checkpoint:true}`
       break
     case "timer": {
       const varName = `__dt_${label.replace(/[^a-zA-Z0-9]/g, "_")}`
@@ -178,7 +224,7 @@ function goProbe(args: {
 
 // ─── Probe selector ────────────────────────────────────────────────────
 
-function generateProbe(filePath: string, args: {
+function generateProbe(filePath: string, mode: "cli" | "browser", args: {
   probeType: string
   expr?: string
   fn?: string
@@ -187,6 +233,25 @@ function generateProbe(filePath: string, args: {
   captureUrl: string
 }): string {
   const ext = extname(filePath)
+
+  // CLI mode: console.log probes (stdout capture)
+  if (mode === "cli") {
+    switch (ext) {
+      case ".ts":
+      case ".tsx":
+      case ".js":
+      case ".jsx":
+        return jsCliProbe(args)
+      case ".py":
+        return pyCliProbe(args)
+      case ".go":
+        return goCliProbe(args)
+      default:
+        return jsCliProbe(args)
+    }
+  }
+
+  // Browser mode: HTTP fetch probes (Cursor pattern)
   switch (ext) {
     case ".ts":
     case ".tsx":
@@ -198,9 +263,55 @@ function generateProbe(filePath: string, args: {
     case ".go":
       return goProbe(args)
     default:
-      // Default to JS probe (works for .mjs, .cjs, etc.)
       return jsProbe(args)
   }
+}
+
+// ─── CLI probe generators for Python/Go ──────────────────────────────
+
+function pyCliProbe(args: {
+  probeType: string
+  expr?: string
+  label: string
+  sessionId: string
+}): string {
+  const { probeType, expr, label, sessionId } = args
+  let val: string
+  switch (probeType) {
+    case "log":
+      val = expr ? `{${expr}}` : `{"checkpoint": True}`
+      break
+    case "trace":
+      val = `{"type": "enter"}`
+      break
+    case "watch":
+      val = expr ? `{"value": ${expr}}` : `{"watching": True}`
+      break
+    default:
+      val = `{"type": "${probeType}"}`
+  }
+  return `# @debug:${probeType}:${sessionId}\nprint(f"[DEBUG:${label}:${sessionId}] {${val}}", flush=True)`
+}
+
+function goCliProbe(args: {
+  probeType: string
+  expr?: string
+  label: string
+  sessionId: string
+}): string {
+  const { probeType, expr, label, sessionId } = args
+  let val: string
+  switch (probeType) {
+    case "log":
+      val = expr ? `${expr}` : `"checkpoint=true"`
+      break
+    case "trace":
+      val = `"type=enter"`
+      break
+    default:
+      val = `"type=${probeType}"`
+  }
+  return `// @debug:${probeType}:${sessionId}\nfmt.Println("[DEBUG:${label}:${sessionId}]", ${val})`
 }
 
 // ─── Tool definition ───────────────────────────────────────────────────
@@ -208,14 +319,16 @@ function generateProbe(filePath: string, args: {
 export const instrumentTool = tool({
   description:
     "Inject HTTP-based debug probes into source files. Probes POST runtime data to the debug capture server, " +
-    "making them work in BOTH browser and CLI environments.\n\n" +
-    "Supports 4 probe types:\n" +
-    "- trace: logs function entry with context\n" +
-    "- log: logs variable/expression values\n" +
-    "- timer: measures execution time\n" +
-    "- watch: tracks expression value changes\n\n" +
+    "Inject debug probes into source files. Two modes:\\n\\n" +
+    "CLI mode (default): injects console.log/print probes for stdout capture. Use with debug-run-and-capture.\\n" +
+    "Browser mode: injects fetch() POST probes (Cursor pattern) for capture from user's real browser. Use with debug-server.\\n\\n" +
+    "Supports 4 probe types:\\n" +
+    "- trace: logs function entry with context\\n" +
+    "- log: logs variable/expression values\\n" +
+    "- timer: measures execution time\\n" +
+    "- watch: tracks expression value changes\\n\\n" +
     "Works with TypeScript, JavaScript, Python, and Go. " +
-    "IMPORTANT: Run debug-server start BEFORE injecting probes. " +
+    "Browser mode: Run debug-server start BEFORE injecting probes. " +
     "Probes are wrapped in #region blocks for easy cleanup via debug-cleanup.",
   args: {
     filePath: tool.schema
@@ -243,10 +356,14 @@ export const instrumentTool = tool({
       .string()
       .optional()
       .describe("Label for the probe (shown in debug output)"),
+    mode: tool.schema
+      .enum(["cli", "browser"])
+      .optional()
+      .describe("Instrumentation mode: 'cli' = console.log probes for stdout capture (default), 'browser' = fetch() POST probes for HTTP capture"),
     captureUrl: tool.schema
       .string()
       .optional()
-      .describe("Override capture server URL (default: auto-detected from debug-server)"),
+      .describe("Capture server URL (browser mode: auto-detected from debug-server. cli mode: ignored)"),
   },
   async execute(args: InstrumentArgs, _context: ToolContext): Promise<string> {
     if (!existsSync(CAPTURE_DIR)) mkdirSync(CAPTURE_DIR, { recursive: true })
@@ -256,13 +373,19 @@ export const instrumentTool = tool({
       return `File not found: ${filePath}`
     }
 
-    // Resolve capture URL: explicit override > running server > error
-    const captureUrl = args.captureUrl ?? getServerUrl()
-    if (!captureUrl) {
-      return "Error: No debug server running. Run 'debug-server start' first, or provide captureUrl explicitly."
+    const mode = args.mode ?? "cli"
+    const sessionId = args.sessionId ?? "manual"
+
+    // CLI mode: no capture server needed
+    // Browser mode: resolve capture URL
+    let captureUrl = ""
+    if (mode === "browser") {
+      captureUrl = args.captureUrl ?? getServerUrl() ?? ""
+      if (!captureUrl) {
+        return "Error: Browser mode requires a running debug server. Run 'debug-server start' first, or provide captureUrl explicitly."
+      }
     }
 
-    const sessionId = args.sessionId ?? "manual"
     const content = readFileSync(filePath, "utf-8")
     const lines = content.split("\n")
 
@@ -276,8 +399,8 @@ export const instrumentTool = tool({
       writeFileSync(bakPath, content)
     }
 
-    // Generate probe code
-    const probeBlock = generateProbe(filePath, {
+    // Generate probe code (mode-aware)
+    const probeBlock = generateProbe(filePath, mode, {
       probeType: args.probeType,
       expr: args.expression,
       fn: args.functionName,
