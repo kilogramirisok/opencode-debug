@@ -196,6 +196,30 @@ Each debug session gets a unique ID. All probes, capture logs, and manifests are
 
 The key differentiator: **OpenCode can reproduce the bug automatically** without the user doing anything. Cursor needs the user to trigger the reproduction manually.
 
+## Verified Test Results
+
+**Unit tests:** 16/16 passing (`npm run test`)
+- Tool build compilation
+- run-and-capture: stdout/stderr capture, exit codes, session reuse
+- quick-check: error pattern detection (TypeError, ImportError, etc.)
+- instrument: probe injection with .bak backup and manifest
+- read-capture: keyword/regex filtering, line ranges
+- cleanup: marker removal, backup cleanup
+- Plugin entry point: valid hooks, tool registration, agent config
+
+**Integration tests in OpenCode 1.14.39:**
+
+1. **Plugin loading:** All 5 tools registered in `tool.registry` ✅
+2. **Agent selection:** `--agent debug` activates debug agent with glm-5.1 ✅
+3. **Quick-check tool:** Called by LLM, detected TypeError in `undefined.foo` ✅
+4. **Full debug workflow:** instrument → run-and-capture → read-capture → fix → verify ✅
+   - Injected log probe at specific line with expression
+   - Captured runtime output with session-scoped log
+   - Filtered captured output by "DEBUG" keyword
+   - LLM generated root cause analysis table from probe data
+5. **Skill auto-activation:** Default `build` agent automatically used `debug-quick-check` when encountering errors (no `--agent debug` needed) ✅
+6. **Cleanup tool:** Removes `/* @debug:... */` markers and `.debug.bak` files ✅
+
 ## License
 
 MIT
