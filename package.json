@@ -6,10 +6,10 @@
   "author": "Roman Rolgin",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/rolginroman/opencode-debug.git"
+    "url": "git+https://github.com/kilogramirisok/opencode-debug.git"
   },
-  "homepage": "https://github.com/rolginroman/opencode-debug#readme",
-  "bugs": "https://github.com/rolginroman/opencode-debug/issues",
+  "homepage": "https://github.com/kilogramirisok/opencode-debug#readme",
+  "bugs": "https://github.com/kilogramirisok/opencode-debug/issues",
 
   "type": "module",
   "exports": {
