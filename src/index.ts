@@ -32,7 +32,6 @@ const DebugPlugin: Plugin = async (_ctx) => {
         ...(config.agent as Record<string, unknown> ?? {}),
         debug: {
           name: "debug",
-          model: "inherit",
           prompt: AGENT_DIR,
         },
       }
