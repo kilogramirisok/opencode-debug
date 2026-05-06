@@ -1,0 +1,44 @@
+{
+  "name": "opencode-debug",
+  "version": "0.1.0",
+  "description": "Runtime debug agent for OpenCode — inject probes, capture output, analyze, fix, cleanup",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "type": "module",
+  "files": [
+    "dist",
+    "agent",
+    "skill",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "keywords": [
+    "opencode",
+    "opencode-plugin",
+    "debug",
+    "debugging",
+    "runtime",
+    "instrumentation",
+    "probe",
+    "agent"
+  ],
+  "author": "Roman Rolgin",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/rolginroman/opencode-debug"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "^1.4.6",
+    "@types/bun": "latest",
+    "typescript": "^5.7.0",
+    "vitest": "^4.0.16"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": "*"
+  }
+}
