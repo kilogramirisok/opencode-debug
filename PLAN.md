@@ -4,16 +4,32 @@
 
 Current `opencode-debug` only captures stdout/stderr from shell commands. This works for CLI/server apps but is **completely blind to browser apps** — injected `console.log` probes fire in the browser console where the agent can't see them.
 
-## How Cursor Does It
+## How Cursor Does It (verified from official blog + forum + engineer analysis)
 
-Cursor's debug agent works because:
-1. It spins up a **local HTTP debug server** (owned by the IDE extension)
-2. Injected probes make **`fetch()` POST requests** to that server with runtime data
-3. The browser (user's real browser with extensions, cookies, sessions) executes the instrumented code
-4. Probes fire during normal user interaction → data flows back to the debug server
-5. The agent reads captured data from the server's logs
+Sources: cursor.com/blog/debug-mode, davidgomes.com (Cursor engineer), forum.cursor.com/t/cursor-2-2-debug-mode
 
-Key: the user's browser is untouched. Probes are just JavaScript `fetch()` calls that POST JSON to `localhost:{debugPort}`.
+**Architecture (confirmed):**
+1. Agent reads codebase, generates **multiple hypotheses** about the bug
+2. Instruments code with `fetch()` POST calls to a **local HTTP server** spun up by Cursor
+3. Also writes to a **local file** as secondary capture (confirmed by users: "streamed data to a file it could read")
+4. User reproduces bug in their **real browser/dev environment** — probes fire, data POSTs back
+5. Agent reads captured data, generates targeted fix (often 2-3 lines vs hundreds of speculative lines)
+6. User verifies fix → agent removes all instrumentation → clean minimal diff
+
+**Implementation details (from forum users who inspected the code):**
+- Probes wrapped in collapsed `// #region agent log ... #endregion` blocks for readability
+- In TypeScript/JS: `fetch("http://localhost:{port}/capture", ...)` with JSON payload
+- In some languages/environments: writes to file instead of HTTP (language-specific fallback)
+- **No LSP, no debugger protocol, no breakpoints** — purely text-based HTTP logging
+- This is why it works for "basically any programming language, and any environment" (davidgomes quote)
+- Android emulator gotcha: needs `10.0.2.2` instead of `127.0.0.1` (environment awareness needed)
+
+**What makes it genius (davidgomes analysis):**
+- "Cursor's Debug Mode could arguably have been called Instrumentation Mode"
+- "All it does is make the agent aware of the actual runtime characteristics"
+- "LLMs are really good at parsing text" — textual logs are the ideal format for LLM analysis
+- Works across frontend<>backend boundaries — instruments both sides simultaneously
+- Human-in-the-loop verification is critical — agent can't judge if fix "feels right"
 
 ## How Sentry/OTel Do Browser Instrumentation
 
@@ -73,26 +89,28 @@ For v1, we document this. For v2, we auto-patch vite.config/next.config.
 console.log("[DEBUG:loop-iteration:manual]", { i, value: items[i] });
 ```
 
-### New (HTTP-based, works in browser AND CLI):
-```js
+### New (HTTP-based, Cursor-verified pattern):
+```ts
+// #region opencode-debug: loop-iteration
 (function(){
   var _d = {t:Date.now(), p:"loop-iteration", s:"manual", d:{i:i, value:items[i]}};
   var _j = JSON.stringify(_d);
   if(typeof fetch==="function"){
     fetch("http://localhost:9514/capture",{method:"POST",body:_j,headers:{"Content-Type":"application/json"},keepalive:true}).catch(function(){});
-  } else {
-    console.log("[DEBUG]", _j);
   }
+  if(typeof process!=="undefined"&&process.stdout){process.stdout.write("[DEBUG] "+_j+"\n");}
 })();
+// #endregion opencode-debug: loop-iteration
 ```
 
-This IIFE pattern:
-- Works in browser (fetch available) → POSTs to debug server
-- Works in Node.js (fetch available in 18+) → POSTs to debug server
-- Falls back to console.log if fetch unavailable
-- `keepalive: true` — survives page navigation
-- `.catch(function(){})` — never disrupts app execution
+This matches Cursor's pattern (confirmed from forum):
+- `#region` / `#endregion` blocks for collapsibility and easy cleanup
 - IIFE avoids polluting local scope
+- `fetch()` works in browser AND Node.js 18+
+- `keepalive: true` survives page navigation
+- `.catch(function(){})` never disrupts app execution
+- Dual capture: HTTP POST to debug server + stdout fallback for environments where fetch fails
+- Python/Go: similar pattern using `urllib`/`http.Post`
 
 ## Revised Architecture
 
