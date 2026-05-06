@@ -154,6 +154,21 @@ This matches Cursor's pattern (confirmed from forum):
 └─────────────────────────────────────────────────┘
 ```
 
+## Two Modes
+
+### CLI Mode (existing, unchanged)
+For Node.js/Python/Go CLI apps and test suites.
+- Probes: `console.log("[DEBUG:...]")` → stdout
+- Capture: shell subprocess → stdout/stderr → file
+- Tools: `debug-quick-check`, `debug-run-and-capture` (as-is)
+
+### Browser Mode (new)
+For React/Vue/Next.js/browser apps running in the user's real browser.
+- Probes: `fetch("http://localhost:{port}/capture", ...)` → HTTP POST
+- Capture: local HTTP server → JSON probe data → file
+- Tools: `debug-server` (new), `debug-instrument` gains `mode` param
+- User reproduces bug in their own browser, probes POST back
+
 ## Tool Changes
 
 ### NEW: `debug-server` tool
@@ -162,65 +177,58 @@ This matches Cursor's pattern (confirmed from forum):
 - Spins up a lightweight HTTP server (Node `http.createServer`)
 - `POST /capture` → receive probe data, append to log
 - `GET /status` → show running sessions, port, probe count
-- `GET /sessions` → list captured sessions
 - Persists across tool calls (server ref stored in module scope)
 - Returns the `debugUrl` so instrument knows where probes should POST
 
-### REWRITTEN: `debug-instrument`
-- Takes `debugUrl` from server (or user provides)
-- Injects IIFE-wrapped `fetch(debugUrl + "/capture", ...)` probes
-- Works identically for .ts/.js/.py/.go (generates language-appropriate HTTP calls)
-- Python: `urllib.request.urlopen("http://localhost:9514/capture", json.dumps(data))`
-- Go: `http.Post("http://localhost:9514/capture", "application/json", bytes.NewReader(data))`
+### UPDATED: `debug-instrument` — gains `mode` param
+- `mode: "cli" | "browser"` (default: "cli" — existing behavior)
+- **CLI mode** (existing): injects `console.log("[DEBUG:...]")` probes (unchanged)
+- **Browser mode** (new): injects `fetch()` IIFE probes wrapped in `#region` blocks
+- Browser mode requires `debugUrl` param (from `debug-server start`)
 
 ### KEPT: `debug-run-and-capture`
-- Still useful for CLI/server apps
-- Now ALSO starts the debug server if not running, so CLI probes work too
-- Captures both stdout/stderr AND probe data in the same session log
+- No changes. Used in CLI mode only.
+
+### KEPT: `debug-quick-check`
+- No changes. Pure CLI triage.
 
 ### UPDATED: `debug-read-capture`
-- Reads structured JSON probe data from HTTP captures
-- Can filter by probe name, time range, data content
-- Formats output for LLM analysis
+- Reads from BOTH capture sources (stdout logs + HTTP server JSON)
+- Auto-detects format, handles both transparently
 
 ### UPDATED: `debug-cleanup`
-- Removes probes (same as before)
-- Optionally stops debug server
-- Warns if server is still receiving data
-
-### UPDATED: `debug-quick-check`
-- No changes needed — pure CLI triage tool
+- Removes probes (both modes — regex handles `#region` blocks and `console.log` patterns)
+- Optional `stopServer: true` to shut down debug server too
 
 ## Workflow
 
-### Browser app debugging:
+### CLI mode (existing, unchanged):
+1. Agent: `debug-instrument {mode: "cli"}` → injects console.log probes
+2. Agent: `debug-run-and-capture "node app.js"` → runs app, captures stdout
+3. Agent: `debug-read-capture` → analyzes captured output
+4. Fix, cleanup
+
+### Browser mode (new):
 1. Agent: `debug-server start` → "Debug server running on http://localhost:9514"
-2. Agent: `debug-instrument` → injects fetch probes pointing to :9514
+2. Agent: `debug-instrument {mode: "browser", debugUrl: "http://localhost:9514"}` → injects fetch probes
 3. Agent tells user: "I've instrumented your app. Please reproduce the bug in your browser."
 4. User clicks around in their browser (real browser, real extensions, real cookies)
 5. Probes fire → POST data to :9514 → captured in session log
 6. Agent: `debug-read-capture` → analyzes the probe data
 7. Agent: fixes the bug
-8. Agent: `debug-cleanup` → removes probes, stops server
-
-### CLI/server app debugging (existing flow, enhanced):
-1. Agent: `debug-server start` 
-2. Agent: `debug-instrument` → injects probes
-3. Agent: `debug-run-and-capture "node app.js"` → runs app, probes POST to server
-4. Agent: `debug-read-capture` → analyzes
-5. Fix, cleanup
+8. Agent: `debug-cleanup {stopServer: true}` → removes probes, stops server
 
 ## File Changes
 
 | File | Action | Description |
 |------|--------|-------------|
-| `src/tools/debug-server.ts` | **NEW** | HTTP capture server |
-| `src/tools/instrument.ts` | **REWRITE** | HTTP-based probes |
-| `src/tools/run-and-capture.ts` | **UPDATE** | Start server if needed |
-| `src/tools/read-capture.ts` | **UPDATE** | Parse structured JSON |
-| `src/tools/cleanup.ts` | **UPDATE** | Stop server option |
+| `src/tools/debug-server.ts` | **NEW** | HTTP capture server (start/stop/status) |
+| `src/tools/instrument.ts` | **UPDATE** | Add `mode` param, browser mode generates fetch probes |
+| `src/tools/read-capture.ts` | **UPDATE** | Handle JSON from HTTP captures alongside CLI logs |
+| `src/tools/cleanup.ts` | **UPDATE** | Regex for `#region` blocks + `stopServer` option |
+| `src/tools/run-and-capture.ts` | **KEEP** | No changes |
 | `src/tools/quick-check.ts` | **KEEP** | No changes |
-| `src/index.ts` | **UPDATE** | Add debug-server tool |
-| `src/test.ts` | **REWRITE** | New test suite |
-| `agent/debug.md` | **UPDATE** | Updated workflow docs |
-| `README.md` | **UPDATE** | Architecture docs |
+| `src/index.ts` | **UPDATE** | Register `debug-server` tool (6th tool) |
+| `src/test.ts` | **UPDATE** | Add tests for browser mode + debug-server |
+| `agent/debug.md` | **UPDATE** | Document both modes, when to use which |
+| `README.md` | **UPDATE** | Architecture with two-mode diagram |
