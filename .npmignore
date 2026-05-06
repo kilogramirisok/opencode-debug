@@ -1,0 +1,11 @@
+src/
+node_modules/
+tsconfig.json
+vitest.config.*
+.github/
+.git/
+.opencode/
+*.test.ts
+*.spec.ts
+PLAN.md
+.tmp/
