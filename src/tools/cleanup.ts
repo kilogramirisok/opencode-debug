@@ -6,6 +6,7 @@
 import { tool, type ToolContext } from "@opencode-ai/plugin"
 import { readFileSync, writeFileSync, existsSync, readdirSync, unlinkSync, statSync } from "node:fs"
 import { join, basename } from "node:path"
+import { getServerUrl } from "./debug-server"
 
 const CAPTURE_DIR = join(process.env.RUNTIME_DIR ?? "/tmp", "opencode-debug")
 
@@ -20,11 +21,13 @@ export interface CleanupArgs {
   restoreFromBackup?: boolean
   /** Dry run: show what would be cleaned without doing it */
   dryRun?: boolean
+  /** Also stop the debug capture server (for browser mode) */
+  stopServer?: boolean
 }
 
 interface CleanupAction {
   file: string
-  action: "removed-markers" | "restored-backup" | "removed-log"
+  action: "removed-markers" | "removed-region" | "restored-backup" | "removed-log" | "stopped-server"
   details: string
 }
 
@@ -56,6 +59,10 @@ export const cleanupTool = tool({
       .boolean()
       .optional()
       .describe("Preview what would be cleaned without making changes"),
+    stopServer: tool.schema
+      .boolean()
+      .optional()
+      .describe("Also stop the debug capture server after cleanup (for browser mode)"),
   },
   async execute(args: CleanupArgs, _context: ToolContext): Promise<string> {
     const actions: CleanupAction[] = []
@@ -114,18 +121,41 @@ export const cleanupTool = tool({
           actions.push({ file: filePath, action: "restored-backup", details: `Restored from ${basename(bakPath)}` })
         }
       } else {
-        // Remove probe lines by markers
+        // Remove probe lines by markers (both CLI and browser mode)
         const content = readFileSync(filePath, "utf-8")
         const lines = content.split("\n")
         const sessionPattern = args.sessionId ?? ""
 
         const cleanedLines: string[] = []
+        let inRegionBlock = false
         let skipNext = false
 
         for (let i = 0; i < lines.length; i++) {
           const line = lines[i]
 
-          // Check if this is a marker line
+          // Handle #region opencode-debug blocks (browser mode probes)
+          if (line.match(/\/\/\s*#region\s+opencode-debug/)) {
+            if (sessionPattern && !line.includes(sessionPattern)) {
+              cleanedLines.push(line)
+              continue
+            }
+            inRegionBlock = true
+            actions.push({ file: filePath, action: "removed-region", details: `Line ${i + 1}: ${line.trim()}` })
+            continue
+          }
+
+          // End of #region block
+          if (inRegionBlock && line.match(/\/\/\s*#endregion\s+opencode-debug/)) {
+            inRegionBlock = false
+            continue
+          }
+
+          // Skip everything inside a #region block
+          if (inRegionBlock) {
+            continue
+          }
+
+          // Check if this is a CLI marker line (/* @debug:... */ or # @debug:...)
           const isMarker = line.match(/\/\*\s*@debug:\w+:[\w-]+\s*\*\//) || line.match(/#\s*@debug:\w+:[\w-]+/)
           if (isMarker) {
             // If sessionId specified, only remove markers for that session
@@ -182,11 +212,31 @@ export const cleanupTool = tool({
       }
     }
 
+    // 5. Stop debug server if requested
+    let serverStatus = ""
+    if (args.stopServer) {
+      const serverUrl = getServerUrl()
+      if (serverUrl) {
+        if (!args.dryRun) {
+          try {
+            const resp = await fetch(`${serverUrl}/shutdown`, { method: "POST" })
+            const body = await resp.text()
+            serverStatus = `\nServer: ${body}`
+          } catch {
+            serverStatus = "\nServer: (already stopped or unreachable)"
+          }
+        } else {
+          serverStatus = "\nServer: would be stopped (DRY RUN)"
+        }
+        actions.push({ file: "(server)", action: "stopped-server", details: `Stopped debug capture server` })
+      }
+    }
+
     const summary = args.dryRun ? "DRY RUN — no changes made" : "Cleanup complete"
     const actionLog = actions.length > 0
       ? actions.map(a => `  [${a.action}] ${a.file}: ${a.details}`).join("\n")
       : "  (nothing to clean)"
 
-    return `${summary}\nActions:\n${actionLog}`
+    return `${summary}\nActions:\n${actionLog}${serverStatus}`
   },
 })

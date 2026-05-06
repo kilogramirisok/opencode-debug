@@ -7,6 +7,7 @@ import { readCaptureTool } from "./tools/read-capture"
 import { instrumentTool } from "./tools/instrument"
 import { cleanupTool } from "./tools/cleanup"
 import { quickCheckTool } from "./tools/quick-check"
+import { debugServerTool } from "./tools/debug-server"
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
@@ -19,10 +20,11 @@ const SKILL_DIR = join(PLUGIN_ROOT, "skill")
  * 
  * Provides runtime debugging tools for OpenCode:
  * - debug-quick-check: Fast triage — run a command and diagnose failures
- * - debug-instrument: Inject debug probes into source files
+ * - debug-instrument: Inject debug probes into source files (CLI or browser mode)
  * - debug-run-and-capture: Run commands and capture stdout/stderr to log files
  * - debug-read-capture: Read and filter captured debug output
  * - debug-cleanup: Remove debug probes and clean up capture logs
+ * - debug-server: Manage HTTP capture server for browser mode probes
  */
 const DebugPlugin: Plugin = async (_ctx) => {
   return {
@@ -48,6 +50,7 @@ const DebugPlugin: Plugin = async (_ctx) => {
 
     tool: {
       "debug-quick-check": quickCheckTool,
+      "debug-server": debugServerTool,
       "debug-instrument": instrumentTool,
       "debug-run-and-capture": runAndCaptureTool,
       "debug-read-capture": readCaptureTool,

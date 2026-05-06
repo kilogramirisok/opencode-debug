@@ -254,8 +254,8 @@ describe("Tool: read-capture", () => {
     }
     await runAndCaptureTool.execute({ command: 'echo "line1\nline2\nline3\nERROR: something broke\nline5"', sessionId: "read-test", cwd: "/tmp", timeout: 5 }, ctx)
 
-    // Read with keyword filter
-    const result = await readCaptureTool.execute({ sessionId: "read-test", keyword: "ERROR" }, ctx)
+    // Read with keyword filter (raw format since this is stdout capture, not JSON probes)
+    const result = await readCaptureTool.execute({ sessionId: "read-test", keyword: "ERROR", format: "raw" }, ctx)
     expect(result).toContain("something broke")
   })
 
@@ -273,7 +273,7 @@ describe("Tool: read-capture", () => {
       ask: () => ({}) as any,
     }
 
-    const result = await readCaptureTool.execute({ sessionId: "read-test", pattern: "ERROR.*" }, ctx)
+    const result = await readCaptureTool.execute({ sessionId: "read-test", pattern: "ERROR.*", format: "raw" }, ctx)
     expect(result).toContain("something broke")
   })
 
