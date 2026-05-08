@@ -29,12 +29,14 @@ const SKILL_DIR = join(PLUGIN_ROOT, "skill")
 const DebugPlugin: Plugin = async (_ctx) => {
   return {
     config: async (config: Record<string, unknown>) => {
-      // Register the debug agent
+      // Register the debug agent — deep-merge so user overrides (model, temperature, etc.) survive
+      const existingDebug = (config.agent as Record<string, Record<string, unknown>>)?.debug
       config.agent = {
         ...(config.agent as Record<string, unknown> ?? {}),
         debug: {
           name: "debug",
           prompt: AGENT_DIR,
+          ...existingDebug,
         },
       }
 
