@@ -1,16 +1,15 @@
 {
   "name": "opencode-debug",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Cursor-style debug agent for OpenCode — inject probes into CLI and browser apps, capture runtime data via HTTP, analyze and fix bugs automatically.",
   "license": "MIT",
-  "author": "Roman Rolgin",
+  "author": "rolginroman (Roman Rolgin)",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/kilogramirisok/opencode-debug.git"
   },
   "homepage": "https://github.com/kilogramirisok/opencode-debug#readme",
   "bugs": "https://github.com/kilogramirisok/opencode-debug/issues",
-
   "type": "module",
   "exports": {
     ".": {
@@ -28,12 +27,10 @@
     "CHANGELOG.md",
     "LICENSE"
   ],
-
   "sideEffects": false,
   "engines": {
     "node": ">=20"
   },
-
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
@@ -43,7 +40,6 @@
     "prepublishOnly": "tsc",
     "release": "np"
   },
-
   "keywords": [
     "opencode",
     "opencode-plugin",
@@ -58,7 +54,6 @@
     "cursor-debug",
     "ai-agent"
   ],
-
   "peerDependencies": {
     "@opencode-ai/plugin": ">=1.14.0"
   },
