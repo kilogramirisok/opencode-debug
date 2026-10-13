@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest"
 import { spawn } from "node:child_process"
 import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync, readdirSync } from "node:fs"
-import { join } from "node:path"
+import { join, dirname } from "node:path"
+import { fileURLToPath } from "node:url"
 
 const CAPTURE_DIR = join(process.env.RUNTIME_DIR ?? "/tmp", "opencode-debug")
 const TEST_DIR = "/tmp/debug-test-project"
+const PLUGIN_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 
 // Helper to run a command and capture output
 function run(cmd: string, cwd?: string, timeout = 10000): Promise<{ exitCode: number; stdout: string; stderr: string }> {
@@ -31,19 +33,19 @@ function run(cmd: string, cwd?: string, timeout = 10000): Promise<{ exitCode: nu
 
 describe("Plugin Build", () => {
   it("compiles TypeScript without errors", async () => {
-    const result = await run("npx tsc --noEmit", "/home/rom/Developer/opencode-debug")
+    const result = await run("npx tsc --noEmit", PLUGIN_ROOT)
     expect(result.exitCode).toBe(0)
   })
 
   it("builds dist/ output", async () => {
-    const result = await run("npx tsc", "/home/rom/Developer/opencode-debug")
+    const result = await run("npx tsc", PLUGIN_ROOT)
     expect(result.exitCode).toBe(0)
-    expect(existsSync("/home/rom/Developer/opencode-debug/dist/index.js")).toBe(true)
-    expect(existsSync("/home/rom/Developer/opencode-debug/dist/tools/run-and-capture.js")).toBe(true)
-    expect(existsSync("/home/rom/Developer/opencode-debug/dist/tools/instrument.js")).toBe(true)
-    expect(existsSync("/home/rom/Developer/opencode-debug/dist/tools/read-capture.js")).toBe(true)
-    expect(existsSync("/home/rom/Developer/opencode-debug/dist/tools/cleanup.js")).toBe(true)
-    expect(existsSync("/home/rom/Developer/opencode-debug/dist/tools/quick-check.js")).toBe(true)
+    expect(existsSync(join(PLUGIN_ROOT, "dist/index.js"))).toBe(true)
+    expect(existsSync(join(PLUGIN_ROOT, "dist/tools/run-and-capture.js"))).toBe(true)
+    expect(existsSync(join(PLUGIN_ROOT, "dist/tools/instrument.js"))).toBe(true)
+    expect(existsSync(join(PLUGIN_ROOT, "dist/tools/read-capture.js"))).toBe(true)
+    expect(existsSync(join(PLUGIN_ROOT, "dist/tools/cleanup.js"))).toBe(true)
+    expect(existsSync(join(PLUGIN_ROOT, "dist/tools/quick-check.js"))).toBe(true)
   })
 })
 
@@ -346,29 +348,27 @@ describe("Tool: cleanup", () => {
 })
 
 describe("Plugin Entry Point", () => {
-  it("exports a valid plugin function", async () => {
+  it("exports a valid V2 plugin definition with V1 server() compat", async () => {
     const mod = await import("../dist/index.js")
-    expect(typeof mod.default).toBe("function")
+    // V2 contract: default export is a definition object with id + setup
+    expect(typeof mod.default.id).toBe("string")
+    expect(mod.default.id).toBe("opencode-debug")
+    expect(typeof mod.default.setup).toBe("function")
+    // V1 (>= 1.18.29) contract: server() returns the hooks object
+    expect(typeof mod.default.server).toBe("function")
   })
 
-  it("returns valid hooks when called", async () => {
+  it("V1 server() returns valid hooks", async () => {
     const mod = await import("../dist/index.js")
-    const hooks = await mod.default({
-      client: {} as any,
-      project: {} as any,
-      directory: "/tmp",
-      worktree: "/tmp",
-      experimental_workspace: { register: () => {} },
-      serverUrl: new URL("http://localhost:3000"),
-      $: {} as any,
-    })
+    const hooks = await mod.default.server()
 
     expect(hooks).toBeDefined()
     expect(hooks.tool).toBeDefined()
     expect(hooks.config).toBeDefined()
 
-    // Verify all 5 tools are registered
+    // Verify all 6 tools are registered
     expect(hooks.tool["debug-quick-check"]).toBeDefined()
+    expect(hooks.tool["debug-server"]).toBeDefined()
     expect(hooks.tool["debug-instrument"]).toBeDefined()
     expect(hooks.tool["debug-run-and-capture"]).toBeDefined()
     expect(hooks.tool["debug-read-capture"]).toBeDefined()
@@ -382,17 +382,9 @@ describe("Plugin Entry Point", () => {
     }
   })
 
-  it("config hook registers the debug agent", async () => {
+  it("V1 config hook registers the debug agent", async () => {
     const mod = await import("../dist/index.js")
-    const hooks = await mod.default({
-      client: {} as any,
-      project: {} as any,
-      directory: "/tmp",
-      worktree: "/tmp",
-      experimental_workspace: { register: () => {} },
-      serverUrl: new URL("http://localhost:3000"),
-      $: {} as any,
-    })
+    const hooks = await mod.default.server()
 
     const config: Record<string, unknown> = {}
     await hooks.config!(config)
@@ -401,5 +393,46 @@ describe("Plugin Entry Point", () => {
     expect(config.agent).toBeDefined()
     const agents = config.agent as Record<string, unknown>
     expect(agents.debug).toBeDefined()
+  })
+
+  it("V2 setup registers the debug skill and tools", async () => {
+    const mod = await import("../dist/index.js")
+
+    // Minimal V2 context mock capturing transform registrations
+    const addedSkills: any[] = []
+    const addedTools: any[] = []
+    const ctx = {
+      skill: {
+        transform: async (cb: (editor: any) => void) =>
+          cb({ add: (s: any) => addedSkills.push(s), list: () => [], get: () => undefined, update: () => {}, remove: () => {} }),
+      },
+      tool: {
+        transform: async (cb: (editor: any) => void) =>
+          cb({ add: (t: any) => addedTools.push(t), list: () => [], get: () => undefined, update: () => {}, remove: () => {}, namespace: () => {} }),
+      },
+    }
+
+    await mod.default.setup(ctx)
+
+    // Skill registration
+    expect(addedSkills.length).toBe(1)
+    expect(addedSkills[0].id).toBe("debug")
+    expect(addedSkills[0].content).toContain("Debug Skill")
+
+    // Tool registrations — JSON Schema input, structured result
+    const names = addedTools.map((t) => t.name).sort()
+    expect(names).toEqual([
+      "debug-cleanup",
+      "debug-instrument",
+      "debug-quick-check",
+      "debug-read-capture",
+      "debug-run-and-capture",
+      "debug-server",
+    ])
+    for (const toolDef of addedTools) {
+      expect(toolDef.description).toBeTruthy()
+      expect(toolDef.input.type).toBe("object")
+      expect(typeof toolDef.execute).toBe("function")
+    }
   })
 })

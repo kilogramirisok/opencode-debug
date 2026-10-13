@@ -97,6 +97,19 @@ opencode plugin opencode-debug
 
 That's it. The tools auto-activate when OpenCode sees error messages.
 
+### OpenCode 2.x
+
+The plugin supports both OpenCode 1.x and 2.x from the same package. On OpenCode 2.x, the `debug-*` tools and the `debug` skill are registered automatically after the usual install; restart OpenCode (or run `opencode service restart`) so the plugin loads.
+
+The bundled debug agent is not auto-registered on 2.x. To use the dedicated debug agent (instead of invoking the tools from `build`), copy the bundled agent file:
+
+```bash
+mkdir -p ~/.config/opencode/agents
+cp node_modules/opencode-debug/agent/debug.md ~/.config/opencode/agents/debug.md
+```
+
+Then switch agents with **Tab**.
+
 ## Usage
 
 ### CLI app debugging (fully automatic)
